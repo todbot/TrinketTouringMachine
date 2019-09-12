@@ -81,8 +81,8 @@ void loop()
   pixels->setPixelColor(0, pixels->Color(0,0,(button_press?255:0)) );
   pixels->show();
   
-  Serial.printf("knob1:%d\t knob2:%d\t k2old:%d\t button:%d\n", 
-                   k1, k2, k2old, button_press);
+  Serial.printf("knob1:%3.1d knob2:%3.1d button:%d (k2old:%3.1d)\n", 
+                   k1, k2, button_press, k2old );
 
   delay(100);
 }
