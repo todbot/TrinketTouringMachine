@@ -25,6 +25,8 @@ Oscil <SQUARE_ANALOGUE512_NUM_CELLS, AUDIO_RATE> aSqu(SQUARE_ANALOGUE512_DATA);
 int afreq100 = 120;  // 1.2Hz
 int aratio100 = 100; // 1.0
 
+float theFreq = 0;
+
 // Pins in use
 const int NEO_PIN     = 2;  // D2 A1
 const int KNOB1_PIN   = A3; // D3
@@ -92,21 +94,28 @@ int clkIn;
 bool clockState;
 bool isClocked = false;
 uint32_t clockLastMillis;
-int clkFudgeMicros = 600;
+uint32_t clockLastSeenMillis = 0;
+//int clkFudgeMicros = 600;
 int clkFudgeMillis = 1;
 
 int knob1, knob2;
+bool button_press = false;
 int r1, r2, r3;
 
-void updateLEDs()
+void debugShowSerial()
 {
   // check if data has been sent from the computer:
   if (Serial.available()) {
     Serial.read();
-    Serial.printf("clkd:%d clk:%d r1:%d r2:%d r3:%d \n",
-                  isClocked, clockState, r1, r2, r3);
+    Serial.printf("clkd:%d clk:%d k1:%d k2:%d but:%d \tr1:%d r2:%d r3:%d \n",
+                  isClocked, clockState,
+                  knob1,knob2, button_press,
+                  r1, r2, r3);
   }
+}
 
+void updateLEDs()
+{
   uint32_t clkColor = (clockState) ? 0x00ffffff : 0x000000;
   pixels->setPixelColor(5, clkColor);
   pixels->setPixelColor(4, pixels->Color(clkIn / 4, clkIn / 4, clkIn / 4));
@@ -118,8 +127,8 @@ void updateLEDs()
   pixels->show();
 
 }
-uint32_t clockLastSeenMillis = 0;
 
+// do input CV clock detection
 void updateClock()
 {
   uint32_t now = millis();
@@ -130,40 +139,24 @@ void updateClock()
     clockLastSeenMillis = now; // save new clock
     clockLastMillis = now;
     t -= clkFudgeMillis;
-    float f = 1000.0 / t;
-    setFreq(f);
-    setPhase(0);
-    Serial.printf("\n**Clock! %d**\n", t);
+    if( t > 20 && t < 5000 ) { // only update if within good range
+      theFreq = 1000.0 / t;
+    }
+    //setFreq(f);  // done in updateControl() now
+    //setPhase(0); // FIXME: hmm this screws up sub-freq
+    Serial.printf("\n!%d\n", t);
   }
   clockState = newClockState;
   
   if( now - clockLastSeenMillis > 5000 ) {
-    isClocked = false;    
+    isClocked = false;
   } else { 
     isClocked = true;
   }
 }
 
-// called by Mozzi
-void updateControl()
+void waveSelect(int knob2)
 {
-  // put changing controls in here
-  int knob1 = analogRead(KNOB1_PIN);
-  int knob2 = analogRead(KNOB2_PIN);
-
-  int k2old = knob2;  // save to compare
-  bool button_press = detectButtonFixKnobVal(&knob2);
-
-  afreq100 = map( knob1, 0, 1023, 100, 10 * 100);
-  float f = (float)afreq100 / 100.0;
-
-  if ( !isClocked ) { // if no clock, knob selects freq
-    aSin.setFreq(f);
-    aSaw.setFreq(f);
-    aTri.setFreq(f);
-    aSqu.setFreq(f);
-  }
-
   if ( knob2 <= 255 ) { // A: no 3rd wave, 1st ramp down, 2nd ramp up
     r3 = 0;
     r1 = map(knob2, 0, 255, 1023, 512);
@@ -183,8 +176,35 @@ void updateControl()
     r1 = 0;
     r2 = map(knob2, 768, 1023, 512, 0);
     r3 = map(knob2, 768, 1023, 512, 1023);
+  }  
+}
+
+// called by Mozzi
+void updateControl()
+{
+  // put changing controls in here
+  int knob1 = analogRead(KNOB1_PIN);
+  int knob2 = analogRead(KNOB2_PIN);
+  int k2old = knob2;  // save to compare
+  button_press = detectButtonFixKnobVal(&knob2);
+
+  if ( !isClocked ) { // if no clock, knob selects freq
+    // 1 Hz to 10 Hz
+    afreq100 = map( knob1, 0, 1023, 100, 10 * 100);
+    theFreq = (float)afreq100 / 100.0;
+    setFreq(theFreq);
+  }
+  else {              // pot selects freq multiples/divisors
+    // FIXME: this is a dumb way to do this
+    float b = 4 - map(knob1, 0,1023, 0,8);
+    float f = theFreq;
+    if( b > 0 ) {        f = f * b;  }
+    else if (b < 0 ) {   f = f / -b;  }
+    setFreq(f);
   }
 
+  waveSelect(knob2);
+  
   updateLEDs();
 }
 
