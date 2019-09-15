@@ -16,6 +16,7 @@ const int NEO_PIN     = 2;  // D2 A1
 const int KNOB1_PIN   = A3; // D3
 const int KNOB2_PIN   = A4; // D4
 const int CVOUT_PIN   = A0; // D1
+const int CLKIN_PIN   = A2; // D0
 const int DOTSTAR_DAT = 7;
 const int DOTSTAR_CLK = 8;
 const int LED_PIN     = 13; // onboard LED
@@ -23,14 +24,25 @@ const int LED_PIN     = 13; // onboard LED
 Adafruit_NeoPixel* pixels;
 uint8_t brightness = 30;
 
+void onClockChange()
+{
+//    Serial.printf("\n**Clock!** %d\n", digitalRead(CLKIN_PIN));
+    Serial.printf("\n**Clock!**\n");
+}
+
 void setup()
 {
   Serial.begin(115200);
   pinMode(LED_PIN, OUTPUT);
   pinMode(KNOB1_PIN, INPUT_PULLUP);
   pinMode(KNOB2_PIN, INPUT_PULLUP);
+
   // don't set A0/D1 as OUTPUT or analog output value is cut off at 2.2V
   // pinMode(CVOUT_PIN, OUTPUT);
+
+  pinMode(CLKIN_PIN, INPUT);
+//  attachInterrupt(CLKIN_PIN, onClockChange, CHANGE);
+  attachInterrupt(CLKIN_PIN, onClockChange, RISING);
 
   pixels = new Adafruit_NeoPixel(NUMPIXELS, NEO_PIN, NEO_GRB + NEO_KHZ800);
   pixels->begin();
