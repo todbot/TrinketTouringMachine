@@ -101,38 +101,54 @@ int clkFudgeMillis = 1;
 int knob1, knob2;
 bool button_press = false;
 int r1, r2, r3;
+volatile int lastV;
 
 void debugShowSerial()
 {
   // check if data has been sent from the computer:
   if (Serial.available()) {
     Serial.read();
-    Serial.printf("clkd:%d clk:%d k1:%d k2:%d but:%d \tr1:%d r2:%d r3:%d \n",
+    Serial.printf("clkd:%d clk:%d k1:%d k2:%d but:%d \tr1:%d r2:%d r3:%d lastV:%d \n",
                   isClocked, clockState,
                   knob1,knob2, button_press,
-                  r1, r2, r3);
+                  r1, r2, r3, lastV);
   }
 }
 
 void updateLEDs()
 {
-  uint32_t clkColor = (clockState) ? 0x00ffffff : 0x000000;
-  pixels->setPixelColor(5, clkColor);
-  pixels->setPixelColor(4, pixels->Color(clkIn / 4, clkIn / 4, clkIn / 4));
+  pixels->clear();
 
-  pixels->setPixelColor(0, pixels->Color(r1 / 4, r2 / 4, r3 / 4));
-  pixels->setPixelColor(1, pixels->Color(r1 / 4, r1 / 4, r1 / 4));
-  pixels->setPixelColor(2, pixels->Color(r2 / 4, r2 / 4, r2 / 4));
-  pixels->setPixelColor(3, pixels->Color(r3 / 4, r3 / 4, r3 / 4));
+  uint32_t clkColor = (isClocked) ? 0x00ffff00 : 0x00000000;
+  if( lastV > 0 ) { 
+    clkColor = clkColor + 0xff;
+  }
+  
+  uint32_t clkInColor = 0x000000;
+  if( clockState ) { 
+    clkInColor = 0x00ffffff;
+  }
+  
+  pixels->setPixelColor(7, clkColor);
+  pixels->setPixelColor(6, clkInColor);
+  pixels->setPixelColor(5, pixels->Color(clkIn/4, clkIn/4, clkIn/4));
+
+  //pixels->setPixelColor(3, pixels->Color(r3 / 4, r3 / 4, r3 / 4));
+  //pixels->setPixelColor(2, pixels->Color(r2 / 4, r2 / 4, r2 / 4));
+  //pixels->setPixelColor(1, pixels->Color(r1 / 4, r1 / 4, r1 / 4));
+  pixels->setPixelColor(0, pixels->Color(r1/4, r2/4, r3/4));
   pixels->show();
 
+  debugShowSerial();
 }
 
 // do input CV clock detection
 void updateClock()
-{
+{ 
   uint32_t now = millis();
   uint16_t t = now - clockLastMillis;
+  
+  clkIn = analogRead(CLKIN_PIN);
   int newClockState = (clkIn > 200); // threshold
 
   if ( !newClockState && clockState) { // on falling edge
@@ -208,27 +224,28 @@ void updateControl()
   updateLEDs();
 }
 
+// called by Mozzi
 // 10-bit DAC = 3.3V / 2**10  = 0.003222V per bit
 // 1.0V = 310.3, 2.0V = 620.61, 3.0V = 930.91
-// called by Mozzi
 int updateAudio()
 {
   int v = 0;
   // knob = direct voltage output
+#if 0
   v = r2 - 512;
-  //    v = r2/4;
-  //    v = v*4; // scale to fill range
-
+#else 
+  // mix three different waves proportionally
   v = (aSin.next() * r1) + (aSaw.next() * r2) + (aSqu.next() * r3);
   v = v / 1024; // divisor of scaling r's
   v = v * 4; // scale to fill range
+#endif
+  lastV = v;
   return v;// return an int signal centred around 0
 }
 
 
 void loop()
 {
-  clkIn = analogRead(CLKIN_PIN);
   updateClock();
 
   audioHook(); // required here
