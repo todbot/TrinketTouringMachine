@@ -18,9 +18,12 @@ Oscil <COS256_NUM_CELLS, AUDIO_RATE> aSin(COS256_DATA);
 Oscil <TRIANGLE_ANALOGUE512_NUM_CELLS, AUDIO_RATE> aTri(TRIANGLE_ANALOGUE512_DATA);
 Oscil <SQUARE_ANALOGUE512_NUM_CELLS, AUDIO_RATE> aSqu(SQUARE_ANALOGUE512_DATA);
 
+const bool debug = true;
 
 // use #define for CONTROL_RATE, not a constant
 #define CONTROL_RATE 64 // Hz, powers of 2 are most reliable
+
+const int button_threshold = 90; // 1k resistor on 50k
 
 int afreq100 = 120;  // 1.2Hz
 int aratio100 = 100; // 1.0
@@ -102,13 +105,20 @@ int knob1, knob2;
 bool button_press = false;
 int r1, r2, r3;
 volatile int lastV;
+int lastLastV;
 
 void debugShowSerial()
 {
+  if( debug ) { 
+    if( lastLastV <= 0 && lastV > 0 ) { 
+      Serial.println('!');
+    }
+  }
+  
   // check if data has been sent from the computer:
   if (Serial.available()) {
     Serial.read();
-    Serial.printf("clkd:%d clk:%d k1:%d k2:%d but:%d \tr1:%d r2:%d r3:%d lastV:%d \n",
+    Serial.printf("clkd:%d clk:%d k1:%3d k2:%3d but:%d \tr1:%3d r2:%3d r3:%3d lastV:%d \n",
                   isClocked, clockState,
                   knob1,knob2, button_press,
                   r1, r2, r3, lastV);
@@ -139,7 +149,6 @@ void updateLEDs()
   pixels->setPixelColor(0, pixels->Color(r1/4, r2/4, r3/4));
   pixels->show();
 
-  debugShowSerial();
 }
 
 // do input CV clock detection
@@ -198,12 +207,17 @@ void waveSelect(int knob2)
 // called by Mozzi
 void updateControl()
 {
-  // put changing controls in here
-  int knob1 = analogRead(KNOB1_PIN);
-  int knob2 = analogRead(KNOB2_PIN);
   int k2old = knob2;  // save to compare
-  button_press = detectButtonFixKnobVal(&knob2);
-
+  
+  // put changing controls in here
+  knob1 = analogRead(KNOB1_PIN);
+  knob2 = analogRead(KNOB2_PIN);
+  
+  button_press = detectButtonFixKnobVal(&knob2); // modifies knob2
+  if( button_press ) { 
+    knob2 = k2old; // FIXME: hmmm. seems wrong
+  }
+  
   if ( !isClocked ) { // if no clock, knob selects freq
     // 1 Hz to 10 Hz
     afreq100 = map( knob1, 0, 1023, 100, 10 * 100);
@@ -222,6 +236,11 @@ void updateControl()
   waveSelect(knob2);
   
   updateLEDs();
+
+  debugShowSerial();
+
+  lastLastV = lastV;  // save for next go-around
+
 }
 
 // called by Mozzi
@@ -261,7 +280,6 @@ void loop()
     - set knob value to 0 if button press
     - detect and return button press boolean
 */
-const int button_threshold = 95; // 1k resistor on 50k
 bool detectButtonFixKnobVal(int*knobval)
 {
   int k = *knobval;
