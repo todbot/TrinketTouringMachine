@@ -23,7 +23,6 @@ const bool debug = true;
 // use #define for CONTROL_RATE, not a constant
 #define CONTROL_RATE 64 // Hz, powers of 2 are most reliable
 
-const int button_threshold = 90; // 1k resistor on 50k
 
 int afreq100 = 120;  // 1.2Hz
 int aratio100 = 100; // 1.0
@@ -106,6 +105,8 @@ bool button_press = false;
 int r1, r2, r3;
 volatile int lastV;
 int lastLastV;
+bool mode_wavesel = true; // if false, then amplitude mode
+int amplitude = 1024; // max
 
 void debugShowSerial()
 {
@@ -118,8 +119,8 @@ void debugShowSerial()
   // check if data has been sent from the computer:
   if (Serial.available()) {
     Serial.read();
-    Serial.printf("clkd:%d clk:%d k1:%3d k2:%3d but:%d \tr1:%3d r2:%3d r3:%3d lastV:%d \n",
-                  isClocked, clockState,
+    Serial.printf("mode:%d clkd:%d clk:%d k1:%3d k2:%3d but:%d \tr1:%3d r2:%3d r3:%3d lastV:%d \n",
+                  mode_wavesel, isClocked, clockState,
                   knob1,knob2, button_press,
                   r1, r2, r3, lastV);
   }
@@ -138,14 +139,18 @@ void updateLEDs()
   if( clockState ) { 
     clkInColor = 0x00ffffff;
   }
-  
+  int lastVc = (lastV+512)/4;
   pixels->setPixelColor(7, clkColor);
   pixels->setPixelColor(6, clkInColor);
   pixels->setPixelColor(5, pixels->Color(clkIn/4, clkIn/4, clkIn/4));
+  pixels->setPixelColor(4, pixels->Color(lastVc,lastVc,lastVc) );
 
+  pixels->setPixelColor(1, pixels->Color(mode_wavesel*88,mode_wavesel*88, 0));
+  
   //pixels->setPixelColor(3, pixels->Color(r3 / 4, r3 / 4, r3 / 4));
   //pixels->setPixelColor(2, pixels->Color(r2 / 4, r2 / 4, r2 / 4));
   //pixels->setPixelColor(1, pixels->Color(r1 / 4, r1 / 4, r1 / 4));
+
   pixels->setPixelColor(0, pixels->Color(r1/4, r2/4, r3/4));
   pixels->show();
 
@@ -167,19 +172,20 @@ void updateClock()
     if( t > 20 && t < 5000 ) { // only update if within good range
       theFreq = 1000.0 / t;
     }
-    //setFreq(f);  // done in updateControl() now
+    //setFreq(f);  // setFreq() done in updateControl() now
     //setPhase(0); // FIXME: hmm this screws up sub-freq
     Serial.printf("\n!%d\n", t);
   }
   clockState = newClockState;
   
-  if( now - clockLastSeenMillis > 5000 ) {
+  if( now - clockLastSeenMillis > 5000 || now < 5000 ) {
     isClocked = false;
   } else { 
     isClocked = true;
   }
 }
 
+//
 void waveSelect(int knob2)
 {
   if ( knob2 <= 255 ) { // A: no 3rd wave, 1st ramp down, 2nd ramp up
@@ -213,14 +219,15 @@ void updateControl()
   knob1 = analogRead(KNOB1_PIN);
   knob2 = analogRead(KNOB2_PIN);
   
-  button_press = detectButtonFixKnobVal(&knob2); // modifies knob2
+  button_press = detectButtonFixKnobVal(&knob2,k2old); // modifies knob2
   if( button_press ) { 
-    knob2 = k2old; // FIXME: hmmm. seems wrong
+    knob2 = k2old; // put back old value FIXME: hmmm. seems wrong
+    mode_wavesel = !mode_wavesel; // toggle    
   }
   
   if ( !isClocked ) { // if no clock, knob selects freq
     // 1 Hz to 10 Hz
-    afreq100 = map( knob1, 0, 1023, 100, 10 * 100);
+    afreq100 = map( knob1, 0, 1023, 0.1 *100, 60 * 100); // FIXME
     theFreq = (float)afreq100 / 100.0;
     setFreq(theFreq);
   }
@@ -233,7 +240,12 @@ void updateControl()
     setFreq(f);
   }
 
-  waveSelect(knob2);
+  if( mode_wavesel ) {
+    waveSelect(knob2);
+  }
+  else { 
+    amplitude = knob2;
+  }
   
   updateLEDs();
 
@@ -249,15 +261,13 @@ void updateControl()
 int updateAudio()
 {
   int v = 0;
-  // knob = direct voltage output
-#if 0
-  v = r2 - 512;
-#else 
+  
   // mix three different waves proportionally
   v = (aSin.next() * r1) + (aSaw.next() * r2) + (aSqu.next() * r3);
   v = v / 1024; // divisor of scaling r's
+  v = (v * amplitude) / 1024; 
   v = v * 4; // scale to fill range
-#endif
+  
   lastV = v;
   return v;// return an int signal centred around 0
 }
@@ -277,18 +287,41 @@ void loop()
     (decided by 'button_threshold') is where the button press
     value lives, do the following:
     - rescale the knob value to go from 0-1023
-    - set knob value to 0 if button press
+    - set knob value to  if button press
     - detect and return button press boolean
 */
-bool detectButtonFixKnobVal(int*knobval)
+const int buttonThreshold = 90; // 1k resistor on 50k, 90 out of 0-1023 range
+uint32_t detectButtonMillis;
+uint32_t lastPressMillis;
+const int pressDurMillis = 100;
+//
+bool detectButtonFixKnobVal(int*knobval, int knobvallast)
 {
-  int k = *knobval;
+  int k = *knobval; // get knobval int from pointer
   bool button_press = false;
-  int knew = map(k, button_threshold, 1023, 0, 1023);
-  if ( k < (button_threshold - 10) ) {
-    button_press = true;
-    knew = 0;
+  // remap knobval to ignore button value range
+  int knewval = map(k, buttonThreshold, 1023, 0, 1023);
+
+  if( (millis() - detectButtonMillis) > 50 ) { // time to update debouncer FIXME
+    detectButtonMillis = millis(); 
+    
+    bool isPress = (k < (buttonThreshold - 10)); // detect button
+    
+    if( isPress ) {
+      lastPressMillis = millis();
+      knewval = knobvallast;  // knobval is bad, use last good value
+      // handle debounce: if was pressed and still pressed, is really pressed!
+      if( lastPressMillis && (millis() - lastPressMillis > pressDurMillis) ) {
+        button_press = true;
+      }
+    }
+    else { 
+      lastPressMillis = 0; // zero out our debounce timer because no press
+    }
+    
+    return button_press;
   }
-  *knobval = knew;
+  
+  *knobval = knewval; // save the value back to pointer
   return button_press;
 }
