@@ -3,24 +3,22 @@
 #
 # Functionality
 #
-# Mode A: TuringMachine-like
-# - Green LEDs w/ White LEDs
-# - Length Knob: length of sequence from 1-16
-# - Random Knob:
-#    - midpint : sequences are random  (marching white LED is pink or Bottom LED Red)
-#    - full-CW : repeating sequence lock
-#    - full-CCW: double-length sequence lock
-#    - 1/4-CW  : occasional randomness
-#     -1/4-CCW : occasional randomness double sequence
+# Mode 0: TuringMachine-like
+# - LEDs:  root note color w/ white marching 'step' light, white turns pink w/ random
+# - Knob0 - Length Knob: length of sequence from 1-8
+# - Knob1 - Random Knob:
+#    - >midpoint: sequences are random  (marching white LED is pink)
 # - Button:
 #    - hold : Random knob sets root note
+#    - tap  : change mode
 #
-# Mode B: Direct note control
-# - Yellow LEDs
-# - Length Knob: length of sequence 1-16
-# - Random Knob: adjust state note (when Mode button held)
-# - Mode button: hold to adjust state note
-# 
+# Mode 1: Setup mode
+# - LEDs: hue indicates root note
+# - Knob0 - Length - sets tempo 60-180 bpm, or EXT when fully clockwise
+# - Knob1 - Random - sets scale?
+# - Button:
+#   - hold : nothing
+#   - tap  : change mode
 # 
 #
 # Something like:
@@ -114,8 +112,8 @@ class TrinketTouringMachine:
         note = self.notes[self.note_idx]
         cv = int(self.note_to_dacval(note))
         #if self.note_idx == 0: print("--top--")
-        print('t:{} mode:{} len:{:2} i:{:2} note:{:2} cv:{:5} k0:{:3} k1:{:3} b:{} bh:{} bt:{}'.
-              format(self.tempo, self.mode, self.notes_len, self.note_idx, note, cv, 
+        print('t:{} mode:{}{} len:{:2} i:{:2} note:{:2} cv:{:5} k0:{:3} k1:{:3} b:{} bh:{} bt:{}'.
+              format(self.tempo, self.mode, "E" if self.clk_external else "I", self.notes_len, self.note_idx, note, cv, 
                      self.knob0, self.knob1, self.button_press, self.button_held, time.monotonic() - self.button_time))
 
     # read the two knobs and the one button
@@ -180,13 +178,9 @@ class TrinketTouringMachine:
             self.update_leds_mode0()
         else:
             self.update_leds_mode1()
-            
-    #
-    #
-    def process(self):
-        self.update_knobs_and_button()
-        self.update_leds()
 
+
+    def handle_ui(self):
         # change mode on button press & release, but not hold
         if self.button_change and not self.button_held and not self.button_press:
             self.mode = (self.mode + 1) % 2
@@ -197,16 +191,34 @@ class TrinketTouringMachine:
             if self.button_held:
                 self.note_root = int(simpleio.map_range(self.knob0, 0,255, 0,11))
             
-                # update length based on knob1, but ignore knob1 if button pressedW
-                if not self.button_press:
-                    self.notes_len = int(simpleio.map_range(self.knob1, 0,255, 1,len(self.notes)))
+            # update length based on knob1, but ignore knob1 if button pressedW
+            if not self.button_press:
+                self.notes_len = int(simpleio.map_range(self.knob1, 0,255, 1,len(self.notes)))
 
+            # turn on random if knob > midpoint
+            if self.knob0 > 150:
+                #self.populate_notes()  # randomize
+                #self.alter_note( self.note_idx, random.random() ) # FIXME
+                self.notes[self.note_idx] = self.random_note_in_scale()
+            
         elif self.mode == 1:
-            self.tempo = self.min_tempo + simpleio.map_range(self.knob0, 0,255, 0,self.max_tempo-self.min_tempo)  # tempo can range from 60 - 180
-            self.tempo_secs = 60.0 / self.tempo
+            if self.knob0 > 254:
+                self.clk_external = True
+            else:
+                self.clk_external = False
+                self.tempo = self.min_tempo + simpleio.map_range(self.knob0, 0,255, 0,self.max_tempo-self.min_tempo)  # tempo can range from 60 - 180
+                self.tempo_secs = 60.0 / self.tempo
         
         else:
             print("unknown mode")
+
+        
+    #
+    #
+    def process(self):
+        self.update_knobs_and_button()
+        self.update_leds()
+        self.handle_ui()
 
         triggered = False
         if self.clk_external:  # external clocking
@@ -222,21 +234,16 @@ class TrinketTouringMachine:
         
         self.last_time = time.monotonic()  # save the time for next go around
 
-        self.debug()
-
         # get next note, potentially change it randomly, send it out as CV
         note = self.notes[self.note_idx]
         note = self.note_root + note
         self.output_note_as_cv( note )
 
+        self.debug()
+
         # go to next note
         self.note_idx = (self.note_idx + 1) % self.notes_len
 
-        #
-        if self.knob0 > 150:
-            #self.populate_notes()  # randomize
-            #self.alter_note( self.note_idx, random.random() ) # FIXME
-            self.notes[self.note_idx] = self.random_note_in_scale()
 
     def populate_notes(self):
 #        scale = self.scales[self.scale_idx]
